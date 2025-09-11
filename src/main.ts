@@ -3,7 +3,6 @@ import {TwitterHandler} from "./TwitterHandler";
 import {DEFAULT_SETTINGS, NoteTweetSettings, NoteTweetSettingsTab, createAccount, TwitterAccount} from "./settings";
 import {TweetsPostedModal} from "./Modals/TweetsPostedModal/TweetsPostedModal";
 import {TweetErrorModal} from "./Modals/TweetErrorModal";
-import {SecureModeGetPasswordModal} from "./Modals/SecureModeGetPasswordModal/SecureModeGetPasswordModal";
 import {log} from "./ErrorModule/logManager";
 import {ConsoleErrorLogger} from "./ErrorModule/consoleErrorLogger";
 import {GuiLogger} from "./ErrorModule/guiLogger";
@@ -38,10 +37,6 @@ export default class NoteTweet extends Plugin {
       callback: async () => {
         if (this.twitterHandler.isConnectedToTwitter)
           await this.postSelectedTweet();
-        else if (this.getCurrentAccountSecureMode())
-          await this.secureModeProxy(
-            async () => await this.postSelectedTweet()
-          );
         else {
           this.connectToTwitterWithPlainSettings();
 
@@ -58,8 +53,6 @@ export default class NoteTweet extends Plugin {
       callback: async () => {
         if (this.twitterHandler.isConnectedToTwitter)
           await this.postThreadInFile();
-        else if (this.getCurrentAccountSecureMode())
-          await this.secureModeProxy(async () => await this.postThreadInFile());
         else {
           this.connectToTwitterWithPlainSettings();
 
@@ -75,8 +68,6 @@ export default class NoteTweet extends Plugin {
       name: "Post Tweet",
       callback: async () => {
         if (this.twitterHandler.isConnectedToTwitter) await this.postTweetMode();
-        else if (this.getCurrentAccountSecureMode())
-          await this.secureModeProxy(async () => await this.postTweetMode());
         else {
           this.connectToTwitterWithPlainSettings();
 
@@ -197,10 +188,6 @@ export default class NoteTweet extends Plugin {
   }
 
   public async connectToTwitterWithPlainSettings(): Promise<boolean | undefined> {
-    if (this.getCurrentAccountSecureMode()) {
-      return undefined;
-    }
-    
     // Try to connect to current account in multi-account setup
     const currentAccount = this.getCurrentAccount();
     if (currentAccount) {
@@ -319,24 +306,6 @@ export default class NoteTweet extends Plugin {
     }
   }
 
-  private async secureModeProxy(callback: any) {
-    if (
-      !(this.getCurrentAccountSecureMode() && !this.twitterHandler.isConnectedToTwitter)
-    )
-      return;
-
-    let modal = new SecureModeGetPasswordModal(this.app, this);
-
-    modal.waitForClose
-      .then(async () => {
-        if (this.twitterHandler.isConnectedToTwitter) await callback();
-        else log.logWarning("could not connect to Twitter");
-      })
-      .catch(() => {
-        modal.close();
-        log.logWarning("could not connect to Twitter.");
-      });
-  }
 
   onunload() {
     console.log(UNLOAD_MESSAGE);
@@ -374,7 +343,6 @@ export default class NoteTweet extends Plugin {
       }, {
         postTweetTag: rawSettings.postTweetTag || "",
         autoSplitTweets: rawSettings.autoSplitTweets ?? true,
-        secureMode: rawSettings.secureMode || false,
         // Migrate global scheduling to first account
         scheduling: rawSettings.scheduling || {
           enabled: false,
@@ -422,6 +390,34 @@ export default class NoteTweet extends Plugin {
         new Notice(`NoteTweet: Scheduling settings migrated to ${migratedCount} account(s)`);
       }
     }
+    
+    // Clean up secureMode field from all accounts (deprecated feature)
+    let secureModeCleaned = false;
+    for (const account of this.settings.accounts) {
+      if ((account as any).secureMode !== undefined) {
+        delete (account as any).secureMode;
+        secureModeCleaned = true;
+      }
+    }
+    
+    if (secureModeCleaned) {
+      await this.saveSettings();
+      console.log("NoteTweet: Cleaned up deprecated secureMode fields from accounts");
+    }
+    
+    // Clean up isActive field from all accounts (unused field)
+    let isActiveCleaned = false;
+    for (const account of this.settings.accounts) {
+      if ((account as any).isActive !== undefined) {
+        delete (account as any).isActive;
+        isActiveCleaned = true;
+      }
+    }
+    
+    if (isActiveCleaned) {
+      await this.saveSettings();
+      console.log("NoteTweet: Cleaned up unused isActive fields from accounts");
+    }
   }
 
   private cleanupLegacyFields() {
@@ -433,7 +429,6 @@ export default class NoteTweet extends Plugin {
     delete rawSettings.accessTokenSecret;
     delete rawSettings.postTweetTag;
     delete rawSettings.autoSplitTweets;
-    delete rawSettings.secureMode;
     delete rawSettings.scheduling; // Remove global scheduling
   }
 
@@ -441,11 +436,6 @@ export default class NoteTweet extends Plugin {
     await this.saveData(this.settings);
   }
 
-  // Helper method to get current account's secure mode setting
-  private getCurrentAccountSecureMode(): boolean {
-    const currentAccount = this.getCurrentAccount();
-    return currentAccount ? currentAccount.secureMode : false;
-  }
   
   // Initialize schedulers for accounts with scheduling enabled
   private initializeSchedulers() {

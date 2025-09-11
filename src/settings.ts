@@ -1,6 +1,5 @@
 import {App, ButtonComponent, Modal, Notice, PluginSettingTab, Setting, TextComponent} from "obsidian";
 import NoteTweet from "./main";
-import { SecureModeModal } from "./Modals/SecureModeSettingModal/SecureModeModal";
 import {ScheduledTweetsModal} from "./Modals/ScheduledTweetsModal";
 
 export interface TwitterAccount {
@@ -10,12 +9,10 @@ export interface TwitterAccount {
   apiSecret: string;
   accessToken: string;
   accessTokenSecret: string;
-  isActive: boolean;
   
   // Account-specific settings
   postTweetTag: string;
   autoSplitTweets: boolean;
-  secureMode: boolean;
   
   // Scheduling settings (per account)
   scheduling: {
@@ -53,7 +50,7 @@ export function createAccount(name: string, credentials: {
   apiSecret: string;
   accessToken: string;
   accessTokenSecret: string;
-}, accountSettings?: Partial<Pick<TwitterAccount, 'postTweetTag' | 'autoSplitTweets' | 'secureMode' | 'scheduling'>>): TwitterAccount {
+}, accountSettings?: Partial<Pick<TwitterAccount, 'postTweetTag' | 'autoSplitTweets' | 'scheduling'>>): TwitterAccount {
   return {
     id: generateAccountId(),
     name: name.trim(),
@@ -61,12 +58,10 @@ export function createAccount(name: string, credentials: {
     apiSecret: credentials.apiSecret,
     accessToken: credentials.accessToken,
     accessTokenSecret: credentials.accessTokenSecret,
-    isActive: false,
     
     // Account-specific settings with defaults
     postTweetTag: accountSettings?.postTweetTag || "",
     autoSplitTweets: accountSettings?.autoSplitTweets ?? true,
-    secureMode: accountSettings?.secureMode || false,
     
     // Scheduling settings with defaults
     scheduling: accountSettings?.scheduling || {
@@ -129,12 +124,7 @@ export class NoteTweetSettingsTab extends PluginSettingTab {
   async updateConnectionStatus() {
     this.checkStatus("⏳ Verifying Twitter credentials...");
     const connected = await this.plugin.connectToTwitterWithPlainSettings();
-    const currentAccount = this.plugin.getCurrentAccount();
-    if (connected === undefined && currentAccount?.secureMode) {
-      this.checkStatus("🔒 Secure mode enabled.");
-    } else {
-      this.checkStatus();
-    }
+    this.checkStatus();
   }
 
   display(): void {
@@ -259,7 +249,6 @@ export class NoteTweetSettingsTab extends PluginSettingTab {
     // Account-specific settings
     this.addAccountTweetTagSetting(accountSection, account);
     this.addAccountAutoSplitSetting(accountSection, account);
-    this.addAccountSecureModeSetting(accountSection, account);
     this.addAccountSchedulerSetting(accountSection, account);
   }
   
@@ -438,23 +427,6 @@ export class NoteTweetSettingsTab extends PluginSettingTab {
       );
   }
   
-  private addAccountSecureModeSetting(container: HTMLElement, account: TwitterAccount) {
-    new Setting(container)
-      .setName("Secure Mode")
-      .setDesc("Require password to unlock usage for this account. Scheduler not supported.")
-      .addToggle(toggle =>
-        toggle
-          .setTooltip("Toggle Secure Mode")
-          .setValue(account.secureMode)
-          .onChange(async (value) => {
-            if (value === account.secureMode) return;
-            
-            // TODO: Implement secure mode modal for individual accounts
-            account.secureMode = value;
-            await this.plugin.saveSettings();
-          })
-      );
-  }
 
   private addAccountCredentialSetting(
     container: HTMLElement, 
