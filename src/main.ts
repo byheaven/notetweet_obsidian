@@ -111,9 +111,15 @@ export default class NoteTweet extends Plugin {
   private async postTweetMode() {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     let editor: Editor;
+    let originalSelection: string | null = null;
 
     if (view instanceof MarkdownView) {
       editor = view.editor;
+      
+      // Store original selection for tagging later
+      if (editor?.somethingSelected()) {
+        originalSelection = editor.getSelection();
+      }
     }
 
     let tweet: ITweet | IScheduledTweet;
@@ -122,13 +128,27 @@ export default class NoteTweet extends Plugin {
       let text = editor.getSelection();
 
       try {
-        text = this.parseThreadFromText(text).join("--nt_sep--");
-        const selection = {text, thread: true};
-        tweet = await NewTweetModal.PostTweet(this.app, selection);
+        // First try to parse as list format
+        const listTweets = this.parseListFromText(text);
+        if (listTweets.length > 1) {
+          const selection = {text: listTweets.join("--nt_sep--"), thread: true};
+          tweet = await NewTweetModal.PostTweet(this.app, selection);
+        } else {
+          // Single list item, treat as regular text
+          throw new Error("Single list item, try other parsing methods");
+        }
       } catch {
-        const selection = {text, thread: false};
-        tweet = await NewTweetModal.PostTweet(this.app, selection);
-      } // Intentionally suppressing exceptions. They're expected.
+        try {
+          // Then try THREAD START/END format
+          text = this.parseThreadFromText(text).join("--nt_sep--");
+          const selection = {text, thread: true};
+          tweet = await NewTweetModal.PostTweet(this.app, selection);
+        } catch {
+          // Finally treat as single tweet
+          const selection = {text, thread: false};
+          tweet = await NewTweetModal.PostTweet(this.app, selection);
+        }
+      }
     } else {
         tweet = await NewTweetModal.PostTweet(this.app);
     }
@@ -139,6 +159,14 @@ export default class NoteTweet extends Plugin {
       try {
         const tweetsPosted: TweetV2PostTweetResult[] = await this.twitterHandler.postThread(tweet.content);
         if (tweetsPosted && tweetsPosted.length > 0) {
+          
+          // Apply tag if there was an original selection
+          if (originalSelection && editor && this.settings.postTweetTag && this.settings.postTweetTag.trim() !== '') {
+            const finalContent = this.formatTaggedThread(tweet.content);
+            editor.replaceSelection(finalContent);
+            new Notice(`Tagged: ${this.settings.postTweetTag}`);
+          }
+          
           new TweetsPostedModal(this.app, tweetsPosted, this.twitterHandler).open();
         }
       } catch (e) {
@@ -177,6 +205,13 @@ export default class NoteTweet extends Plugin {
     try {
       let postedTweets = await this.twitterHandler.postThread(threadContent);
       if (postedTweets && postedTweets.length > 0) {
+        // For threads from files, add tags to each tweet section in the file
+        if (this.settings.postTweetTag && this.settings.postTweetTag.trim() !== '') {
+          await this.tagThreadInFile(file, threadContent);
+          new Notice(`Tagged thread with: ${this.settings.postTweetTag}`);
+        }
+        
+        // Show the modal after tags have been applied
         let postedModal = new TweetsPostedModal(
           this.app,
           postedTweets,
@@ -184,9 +219,6 @@ export default class NoteTweet extends Plugin {
         );
 
         await postedModal.waitForClose;
-        if (!postedModal.userDeletedTweets && this.settings.postTweetTag) {
-          postedTweets.forEach((tweet) => this.appendPostTweetTag(tweet.data.text));
-        }
       }
     } catch (e) {
       log.logError(`failed attempted to post tweets. ${e}`);
@@ -209,7 +241,17 @@ export default class NoteTweet extends Plugin {
 
       try {
         let tweet = await this.twitterHandler.postTweet(selection);
+        
         if (tweet) {
+          // Prepend tag to selection immediately after posting
+          if (this.settings.postTweetTag && this.settings.postTweetTag.trim() !== '') {
+            // For single tweet, create simple tagged format
+            const taggedText = `- ${this.settings.postTweetTag} :: ${selection}`;
+            editor.replaceSelection(taggedText);
+            new Notice(`Tagged: ${this.settings.postTweetTag}`);
+          }
+          
+          // Show the modal after tag has been applied
           let postedModal = new TweetsPostedModal(
             this.app,
             [tweet],
@@ -217,9 +259,6 @@ export default class NoteTweet extends Plugin {
           );
 
           await postedModal.waitForClose;
-          if (!postedModal.userDeletedTweets && this.settings.postTweetTag) {
-            await this.appendPostTweetTag(tweet.data.text);
-          }
         }
       } catch (e) {
         log.logError(`failed attempt to post selected. ${e}`);
@@ -291,15 +330,52 @@ export default class NoteTweet extends Plugin {
     return content.map((txt) => txt.trim());
   }
 
-  private async appendPostTweetTag(selection: string) {
-    const currentFile = this.app.workspace.getActiveFile();
-    let pageContent = await this.getFileContent(currentFile);
-
-    pageContent = pageContent.replace(
-      selection.trim(),
-      `${selection.trim()} ${this.settings.postTweetTag}`
-    );
-
-    await this.app.vault.modify(currentFile, pageContent);
+  private async tagThreadInFile(file: TFile, threadContent: string[]) {
+    let fileContent = await this.getFileContent(file);
+    
+    // Tag each tweet section in the thread
+    for (const tweetText of threadContent) {
+      const trimmedTweet = tweetText.trim();
+      if (trimmedTweet && fileContent.includes(trimmedTweet)) {
+        const taggedText = `${this.settings.postTweetTag} :: ${trimmedTweet}`;
+        fileContent = fileContent.replace(trimmedTweet, taggedText);
+      }
+    }
+    
+    await this.app.vault.modify(file, fileContent);
   }
+
+  private parseListFromText(text: string): string[] {
+    const lines = text.split('\n');
+    const tweets: string[] = [];
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (trimmedLine.startsWith('- ')) {
+        // Extract list item content (remove "- " prefix)
+        tweets.push(trimmedLine.substring(2).trim());
+      }
+    }
+    
+    if (tweets.length === 0) {
+      throw new Error("No list items found");
+    }
+    
+    return tweets;
+  }
+
+  private formatTaggedThread(tweetContent: string[]): string {
+    if (tweetContent.length === 0) return '';
+    
+    // Only tag the first tweet with prefix
+    const taggedFirstTweet = `- ${this.settings.postTweetTag} :: ${tweetContent[0]}`;
+    
+    // Subsequent tweets remain as sub-items with 4-space indentation
+    const subsequentTweets = tweetContent.slice(1).map(tweet => 
+      `    - ${tweet}`
+    );
+    
+    return [taggedFirstTweet, ...subsequentTweets].join('\n');
+  }
+
 }
