@@ -43,7 +43,9 @@ export class SecureModeGetPasswordModal extends Modal {
         new Notice("Successfully authenticated with Twitter!");
         this.close();
       } else {
-        new Notice("Failed to authenticate with Twitter. Please check your credentials.");
+        new Notice(
+          "Failed to authenticate with Twitter. Please check your credentials."
+        );
       }
     } catch (e) {
       new Notice("Wrong password or decryption failed.");
@@ -51,17 +53,17 @@ export class SecureModeGetPasswordModal extends Modal {
   }
 
   private async secureModeLogin(password: string): Promise<boolean> {
+    // TODO: Update to work with multi-account system
+    const currentAccount = this._plugin.getCurrentAccount();
+    if (!currentAccount) {
+      return false;
+    }
+
     return await this._plugin.twitterHandler.connectToTwitter(
-      SecureModeCrypt.decryptString(this._plugin.settings.apiKey, password),
-      SecureModeCrypt.decryptString(this._plugin.settings.apiSecret, password),
-      SecureModeCrypt.decryptString(
-        this._plugin.settings.accessToken,
-        password
-      ),
-      SecureModeCrypt.decryptString(
-        this._plugin.settings.accessTokenSecret,
-        password
-      )
+      SecureModeCrypt.decryptString(currentAccount.apiKey, password),
+      SecureModeCrypt.decryptString(currentAccount.apiSecret, password),
+      SecureModeCrypt.decryptString(currentAccount.accessToken, password),
+      SecureModeCrypt.decryptString(currentAccount.accessTokenSecret, password)
     );
   }
 }

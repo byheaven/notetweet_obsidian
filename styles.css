@@ -1,24 +1,46 @@
 .postTweetModal {
-    max-width: 35rem;
+    max-width: min(35rem, 90vw);
     width: 100%;
     overflow-y: auto;
     max-height: 50rem;
     padding-left: 0.5rem;
     padding-right: 0.5rem;
     overflow-x: hidden;
+    box-sizing: border-box;
 }
 
 .tweetArea {
-    max-width: 35rem;
+    max-width: 100%;
     width: 100%;
     display: inline-block;
     min-height: 7.5rem;
     overflow-y: hidden;
     border: 0 solid rgba(63,63,63,1);
+    box-sizing: border-box;
+    word-wrap: break-word;
 }
 
 textarea:focus {
     border: 1px solid rgba(63,63,63,1);
+}
+
+/* Ensure all textareas and inputs fit within modal */
+.postTweetModal textarea, 
+.postTweetModal input, 
+.postTweetModal select {
+    max-width: 100%;
+    box-sizing: border-box;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.postTweetModal .setting-item {
+    overflow: hidden;
+}
+
+.postTweetModal .setting-item-control {
+    min-width: 0;
+    flex-shrink: 1;
 }
 
 .ntLengthChecker {
@@ -101,4 +123,68 @@ textarea:focus {
     display: flex;
     align-content: center;
     gap: 0.5em;
+}
+
+/* NoteTweet Modal Account Selector Styles */
+.notetweet-account-selector {
+    margin-bottom: 15px;
+}
+
+.notetweet-account-selector .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.notetweet-account-selector .setting-item-info {
+    flex: 1;
+    overflow: hidden;
+}
+
+.notetweet-account-selector .setting-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notetweet-account-selector .setting-item-description {
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notetweet-account-selector .setting-item-control {
+    flex-shrink: 0;
+    max-width: 60%;
+}
+
+.notetweet-account-selector select {
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.notetweet-no-accounts-warning, 
+.notetweet-single-account-info {
+    padding: 10px;
+    border-radius: 5px;
+    margin-bottom: 15px;
+}
+
+.notetweet-single-account-info {
+    background-color: var(--background-modifier-success);
+    border-left: 4px solid var(--color-green);
+}
+
+.notetweet-account-status {
+    font-size: 0.9em;
+    margin-top: 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }

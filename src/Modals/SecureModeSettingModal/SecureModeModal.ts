@@ -50,20 +50,26 @@ export class SecureModeModal extends Modal {
   }
 
   private async encryptKeysWithPassword(password: string) {
-    this.plugin.settings.apiKey = SecureModeCrypt.encryptString(
-      this.plugin.settings.apiKey,
+    // TODO: Update to work with multi-account system
+    const currentAccount = this.plugin.getCurrentAccount();
+    if (!currentAccount) {
+      return;
+    }
+
+    currentAccount.apiKey = SecureModeCrypt.encryptString(
+      currentAccount.apiKey,
       password
     );
-    this.plugin.settings.apiSecret = SecureModeCrypt.encryptString(
-      this.plugin.settings.apiSecret,
+    currentAccount.apiSecret = SecureModeCrypt.encryptString(
+      currentAccount.apiSecret,
       password
     );
-    this.plugin.settings.accessToken = SecureModeCrypt.encryptString(
-      this.plugin.settings.accessToken,
+    currentAccount.accessToken = SecureModeCrypt.encryptString(
+      currentAccount.accessToken,
       password
     );
-    this.plugin.settings.accessTokenSecret = SecureModeCrypt.encryptString(
-      this.plugin.settings.accessTokenSecret,
+    currentAccount.accessTokenSecret = SecureModeCrypt.encryptString(
+      currentAccount.accessTokenSecret,
       password
     );
 
@@ -71,20 +77,26 @@ export class SecureModeModal extends Modal {
   }
 
   private async decryptKeysWithPassword(password: string) {
-    this.plugin.settings.apiKey = SecureModeCrypt.decryptString(
-      this.plugin.settings.apiKey,
+    // TODO: Update to work with multi-account system
+    const currentAccount = this.plugin.getCurrentAccount();
+    if (!currentAccount) {
+      return;
+    }
+
+    currentAccount.apiKey = SecureModeCrypt.decryptString(
+      currentAccount.apiKey,
       password
     );
-    this.plugin.settings.apiSecret = SecureModeCrypt.decryptString(
-      this.plugin.settings.apiSecret,
+    currentAccount.apiSecret = SecureModeCrypt.decryptString(
+      currentAccount.apiSecret,
       password
     );
-    this.plugin.settings.accessToken = SecureModeCrypt.decryptString(
-      this.plugin.settings.accessToken,
+    currentAccount.accessToken = SecureModeCrypt.decryptString(
+      currentAccount.accessToken,
       password
     );
-    this.plugin.settings.accessTokenSecret = SecureModeCrypt.decryptString(
-      this.plugin.settings.accessTokenSecret,
+    currentAccount.accessTokenSecret = SecureModeCrypt.decryptString(
+      currentAccount.accessTokenSecret,
       password
     );
 

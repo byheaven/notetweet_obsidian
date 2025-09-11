@@ -1,7 +1,7 @@
-import {ErrorLevel} from "./errorLevel";
+import { ErrorLevel } from "./errorLevel";
 
 export interface NoteTweetError {
-    message: string,
-    level: ErrorLevel,
-    time: number
+  message: string;
+  level: ErrorLevel;
+  time: number;
 }

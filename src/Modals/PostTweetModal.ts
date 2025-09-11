@@ -1,6 +1,7 @@
-import {App, Modal} from "obsidian";
-import {log} from "../ErrorModule/logManager";
+import { App, Modal, Setting } from "obsidian";
+import { log } from "../ErrorModule/logManager";
 import NoteTweet from "../main";
+import { TwitterAccount } from "../settings";
 
 export abstract class PostTweetModal<TPromise> extends Modal {
   protected textAreas: HTMLTextAreaElement[] = [];
@@ -16,34 +17,49 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   public reject: (reason: any) => void;
   public resolve: (tweet: TPromise) => void;
 
-  protected constructor(app: App, plugin: NoteTweet, selection?: { text: string; thread: boolean }) {
+  // Account selection properties
+  protected selectedAccountId: string | null = null;
+  private accountSelector: HTMLSelectElement;
+
+  protected constructor(
+    app: App,
+    plugin: NoteTweet,
+    selection?: { text: string; thread: boolean }
+  ) {
     super(app);
-    this.selectedText = selection ?? {text: "", thread: false};
+    this.selectedText = selection ?? { text: "", thread: false };
     this.plugin = plugin;
 
-    this.newTweet = new Promise(((resolve, reject) => {
-      this.resolve = (tweet => {
+    // Initialize with current account
+    const currentAccount = this.plugin.getCurrentAccount();
+    this.selectedAccountId = currentAccount ? currentAccount.id : null;
+
+    this.newTweet = new Promise((resolve, reject) => {
+      this.resolve = (tweet) => {
         resolve(tweet);
         this.resolved = true;
-      });
+      };
       this.reject = reject;
-    }));
+    });
   }
 
   onOpen() {
-    let {contentEl} = this;
+    let { contentEl } = this;
     contentEl.addClass("postTweetModal");
 
     this.addTooltip("Help", this.helpText, contentEl);
+
+    // Add account selection section
+    this.addAccountSelector(contentEl);
 
     this.textZone = contentEl.createDiv();
 
     try {
       this.createFirstTextarea();
 
-      let addTweetButton = contentEl.createEl("button", {text: "+"});
+      let addTweetButton = contentEl.createEl("button", { text: "+" });
       addTweetButton.addEventListener("click", () =>
-          this.createTextarea(this.textZone)
+        this.createTextarea(this.textZone)
       );
 
       this.addActionButtons();
@@ -61,7 +77,10 @@ export abstract class PostTweetModal<TPromise> extends Modal {
       this.insertTweetsFromSelectedText(textArea, this.textZone);
   }
 
-  private insertTweetsFromSelectedText(textArea: HTMLTextAreaElement, textZone: HTMLDivElement) {
+  private insertTweetsFromSelectedText(
+    textArea: HTMLTextAreaElement,
+    textZone: HTMLDivElement
+  ) {
     let joinedTextChunks;
     if (this.selectedText.thread == false)
       joinedTextChunks = this.textInputHandler(this.selectedText.text);
@@ -70,15 +89,19 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     this.createTweetsWithInput(joinedTextChunks, textArea, textZone);
   }
 
-  protected createTweetsWithInput(inputStrings: string[], currentTextArea: HTMLTextAreaElement, textZone: HTMLDivElement) {
+  protected createTweetsWithInput(
+    inputStrings: string[],
+    currentTextArea: HTMLTextAreaElement,
+    textZone: HTMLDivElement
+  ) {
     inputStrings.forEach((chunk) => {
       try {
         let tempTextarea =
-            currentTextArea.value.trim() == ""
-                ? currentTextArea
-                : this.createTextarea(textZone);
+          currentTextArea.value.trim() == ""
+            ? currentTextArea
+            : this.createTextarea(textZone);
         tempTextarea.setRangeText(chunk);
-        tempTextarea.trigger('input');
+        tempTextarea.trigger("input");
 
         tempTextarea.style.height = tempTextarea.scrollHeight + "px";
       } catch (e) {
@@ -92,20 +115,21 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   // Repeat this until all separated lines are joined into tweets with proper sizes.
   private textInputHandler(str: string) {
     // If auto-split is disabled, return the original string as a single chunk
-    const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+    const currentAccount = this.getSelectedAccount();
+    const autoSplitEnabled = currentAccount?.autoSplitTweets ?? true;
     if (!autoSplitEnabled) {
       return [str];
     }
-    
+
     // Otherwise, perform the normal splitting logic
     let chunks: string[] = str.split("\n");
     let i = 0,
-        joinedTextChunks: string[] = [];
+      joinedTextChunks: string[] = [];
     chunks.forEach((chunk, j) => {
       if (joinedTextChunks[i] == null) joinedTextChunks[i] = "";
       if (
-          joinedTextChunks[i].length + chunk.length <=
-          this.MAX_TWEET_LENGTH - 1
+        joinedTextChunks[i].length + chunk.length <=
+        this.MAX_TWEET_LENGTH - 1
       ) {
         joinedTextChunks[i] = joinedTextChunks[i] + chunk;
         joinedTextChunks[i] += j == chunks.length - 1 ? "" : "\n";
@@ -113,7 +137,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
         if (chunk.length > this.MAX_TWEET_LENGTH) {
           let x = chunk.split(/[.?!]\s/).join("\n");
           this.textInputHandler(x).forEach(
-              (split) => (joinedTextChunks[++i] = split)
+            (split) => (joinedTextChunks[++i] = split)
           );
         } else {
           joinedTextChunks[++i] = chunk;
@@ -124,14 +148,14 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   onClose() {
-    let {contentEl} = this;
+    let { contentEl } = this;
     contentEl.empty();
   }
 
   protected createTextarea(textZone: HTMLDivElement) {
     if (this.textAreas.find((ele) => ele.textLength == 0)) {
       throw new Error(
-          "You cannot add a new tweet when there are empty tweets."
+        "You cannot add a new tweet when there are empty tweets."
       );
     }
 
@@ -145,15 +169,15 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     lengthCheckerEl.addClass("ntLengthChecker");
 
     textarea.addEventListener("input", () =>
-        this.onTweetLengthHandler(textarea.textLength, lengthCheckerEl)
+      this.onTweetLengthHandler(textarea.textLength, lengthCheckerEl)
     );
     textarea.addEventListener(
-        "keydown",
-        this.onInput(textarea, textZone, lengthCheckerEl)
+      "keydown",
+      this.onInput(textarea, textZone, lengthCheckerEl)
     );
     textarea.addEventListener(
-        "paste",
-        this.onPasteMaxLengthHandler(textarea, textZone)
+      "paste",
+      this.onPasteMaxLengthHandler(textarea, textZone)
     );
 
     textarea.focus();
@@ -161,7 +185,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   private addTooltip(title: string, body: string, root: HTMLElement) {
-    let tooltip = root.createEl("div", {text: title});
+    let tooltip = root.createEl("div", { text: title });
     let tooltipBody = tooltip.createEl("span");
     tooltipBody.innerHTML = body;
 
@@ -170,16 +194,17 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   private onPasteMaxLengthHandler(
-      textarea: HTMLTextAreaElement,
-      textZone: HTMLDivElement
+    textarea: HTMLTextAreaElement,
+    textZone: HTMLDivElement
   ) {
     return (event: any) => {
       let pasted: string = event.clipboardData.getData("text");
-      
+
       // Check if the pasted content would exceed the character limit
       if (pasted.length + textarea.textLength > this.MAX_TWEET_LENGTH) {
         // If auto-split is enabled, we should process the paste
-        const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+        const currentAccount = this.getSelectedAccount();
+        const autoSplitEnabled = currentAccount?.autoSplitTweets ?? true;
         if (autoSplitEnabled) {
           event.preventDefault();
           let splicedPaste = this.textInputHandler(pasted);
@@ -192,23 +217,28 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   private onInput(
-      textarea: HTMLTextAreaElement,
-      textZone: HTMLDivElement,
-      lengthCheckerEl: HTMLElement
+    textarea: HTMLTextAreaElement,
+    textZone: HTMLDivElement,
+    lengthCheckerEl: HTMLElement
   ) {
     return (key: any) => {
       if (
-          key.code == "Backspace" &&
-          textarea.textLength == 0 &&
-          this.textAreas.length > 1
+        key.code == "Backspace" &&
+        textarea.textLength == 0 &&
+        this.textAreas.length > 1
       ) {
         key.preventDefault();
         this.deleteTweet(textarea, textZone, lengthCheckerEl);
       }
 
       // Only auto-split tweets if the setting is enabled
-      const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
-      if (key.code == "Enter" && textarea.textLength >= this.MAX_TWEET_LENGTH && autoSplitEnabled) {
+      const currentAccount = this.getSelectedAccount();
+      const autoSplitEnabled = currentAccount?.autoSplitTweets ?? true;
+      if (
+        key.code == "Enter" &&
+        textarea.textLength >= this.MAX_TWEET_LENGTH &&
+        autoSplitEnabled
+      ) {
         key.preventDefault();
         try {
           this.createTextarea(textZone);
@@ -240,7 +270,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
 
       if (key.code == "ArrowUp" && key.ctrlKey && !key.shiftKey) {
         let currentTweetIndex = this.textAreas.findIndex(
-            (tweet) => tweet.value == textarea.value
+          (tweet) => tweet.value == textarea.value
         );
         if (currentTweetIndex > 0)
           this.textAreas[currentTweetIndex - 1].focus();
@@ -248,7 +278,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
 
       if (key.code == "ArrowDown" && key.ctrlKey && !key.shiftKey) {
         let currentTweetIndex = this.textAreas.findIndex(
-            (tweet) => tweet.value == textarea.value
+          (tweet) => tweet.value == textarea.value
         );
         if (currentTweetIndex < this.textAreas.length - 1)
           this.textAreas[currentTweetIndex + 1].focus();
@@ -256,7 +286,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
 
       if (key.code == "ArrowDown" && key.ctrlKey && key.shiftKey) {
         let tweetIndex = this.textAreas.findIndex(
-            (ta) => ta.value == textarea.value
+          (ta) => ta.value == textarea.value
         );
         if (tweetIndex != this.textAreas.length - 1) {
           key.preventDefault();
@@ -267,7 +297,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
 
       if (key.code == "ArrowUp" && key.ctrlKey && key.shiftKey) {
         let tweetIndex = this.textAreas.findIndex(
-            (ta) => ta.value == textarea.value
+          (ta) => ta.value == textarea.value
         );
         if (tweetIndex != 0) {
           key.preventDefault();
@@ -288,8 +318,8 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   private switchTweets(
-      textarea1: HTMLTextAreaElement,
-      textarea2: HTMLTextAreaElement
+    textarea1: HTMLTextAreaElement,
+    textarea2: HTMLTextAreaElement
   ) {
     let temp: string = textarea1.value;
     textarea1.value = textarea2.value;
@@ -299,9 +329,9 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   private deleteTweet(
-      textarea: HTMLTextAreaElement,
-      textZone: HTMLDivElement,
-      lengthCheckerEl: HTMLElement
+    textarea: HTMLTextAreaElement,
+    textZone: HTMLDivElement,
+    lengthCheckerEl: HTMLElement
   ) {
     let i = this.textAreas.findIndex((ele) => ele === textarea);
     this.textAreas.remove(textarea);
@@ -315,8 +345,10 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     const WARN2: number = this.MAX_TWEET_LENGTH - 25;
     const DEFAULT_COLOR = "#339900";
 
-    // Show different message based on auto-split setting
-    const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+    // Get auto-split setting from current account
+    const currentAccount = this.getSelectedAccount();
+    const autoSplitEnabled = currentAccount?.autoSplitTweets ?? true;
+
     if (strlen >= this.MAX_TWEET_LENGTH && !autoSplitEnabled) {
       lengthCheckerEl.innerText = `${strlen} / 280 characters.`;
       lengthCheckerEl.style.color = "#ffcc00"; // Yellow color
@@ -334,18 +366,18 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   private insertTweetAbove(
-      textarea: HTMLTextAreaElement,
-      textZone: HTMLDivElement
+    textarea: HTMLTextAreaElement,
+    textZone: HTMLDivElement
   ) {
     let insertAboveIndex = this.textAreas.findIndex(
-        (area) => area.value == textarea.value
+      (area) => area.value == textarea.value
     );
 
     try {
       let insertedTweet = this.createTextarea(textZone);
       this.shiftTweetsDownFromIndex(insertAboveIndex);
 
-      return {tweet: insertedTweet, index: insertAboveIndex};
+      return { tweet: insertedTweet, index: insertAboveIndex };
     } catch (e) {
       log.logWarning(e);
       return;
@@ -353,11 +385,11 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   }
 
   private insertTweetBelow(
-      textarea: HTMLTextAreaElement,
-      textZone: HTMLDivElement
+    textarea: HTMLTextAreaElement,
+    textZone: HTMLDivElement
   ) {
     let insertBelowIndex = this.textAreas.findIndex(
-        (area) => area.value == textarea.value
+      (area) => area.value == textarea.value
     );
     let fromIndex = insertBelowIndex + 1;
 
@@ -384,21 +416,22 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   protected getThreadContent(): string[] {
     let threadContent = this.textAreas.map((textarea) => textarea.value);
 
-    // If auto-split is disabled, we still need to check for empty tweets
-    // but allow tweets that exceed the length limit
-    const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+    // Get auto-split setting from current account
+    const currentAccount = this.getSelectedAccount();
+    const autoSplitEnabled = currentAccount?.autoSplitTweets ?? true;
+
     if (autoSplitEnabled) {
       if (
-          threadContent.find(
-              (txt) => txt.length > this.MAX_TWEET_LENGTH || txt == ""
-          ) != null
+        threadContent.find(
+          (txt) => txt.length > this.MAX_TWEET_LENGTH || txt == ""
+        ) != null
       ) {
         log.logWarning("At least one of your tweets is too long or empty.");
         return null;
       }
     } else {
       // Just check for empty tweets when auto-split is disabled
-      if (threadContent.find(txt => txt == "") != null) {
+      if (threadContent.find((txt) => txt == "") != null) {
         log.logWarning("At least one of your tweets is empty.");
         return null;
       }
@@ -407,6 +440,121 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     return threadContent;
   }
 
+  private addAccountSelector(contentEl: HTMLElement) {
+    const accounts = this.plugin.settings.accounts;
+
+    if (!accounts || accounts.length === 0) {
+      // No accounts configured - show warning
+      const warningDiv = contentEl.createDiv("notetweet-no-accounts-warning");
+      warningDiv.createEl("p", {
+        text:
+          "⚠️ No Twitter accounts configured. Please add an account in settings first.",
+        cls: "setting-item-description",
+      });
+      warningDiv.style.color = "#dc3545";
+      warningDiv.style.marginBottom = "15px";
+      return;
+    }
+
+    if (accounts.length === 1) {
+      // Only one account - show as info instead of dropdown
+      const accountInfo = contentEl.createDiv("notetweet-single-account-info");
+      accountInfo.createEl("p", {
+        text: `🐦 Posting with: ${accounts[0].name}`,
+        cls: "setting-item-description",
+      });
+      accountInfo.style.marginBottom = "15px";
+      this.selectedAccountId = accounts[0].id;
+      return;
+    }
+
+    // Multiple accounts - show dropdown selector
+    const accountContainer = contentEl.createDiv("notetweet-account-selector");
+
+    new Setting(accountContainer)
+      .setName("🐦 Twitter Account")
+      .setDesc("Choose which account to post with")
+      .addDropdown((dropdown) => {
+        // Add options for each account
+        accounts.forEach((account) => {
+          dropdown.addOption(account.id, account.name);
+        });
+
+        // Set current selection
+        if (this.selectedAccountId) {
+          dropdown.setValue(this.selectedAccountId);
+        }
+
+        // Handle selection change
+        dropdown.onChange((selectedAccountId) => {
+          this.selectedAccountId = selectedAccountId;
+          this.plugin.setLastUsedAccount(selectedAccountId);
+
+          // Update the account info display
+          this.updateAccountStatus();
+        });
+
+        this.accountSelector = dropdown.selectEl;
+      });
+
+    this.updateAccountStatus();
+  }
+
+  private updateAccountStatus() {
+    if (!this.selectedAccountId) return;
+
+    const account = this.plugin.getAccountById(this.selectedAccountId);
+    if (!account) return;
+
+    // Find or create status indicator
+    let statusIndicator = this.contentEl.querySelector(
+      ".notetweet-account-status"
+    ) as HTMLElement;
+    if (!statusIndicator) {
+      const accountContainer = this.contentEl.querySelector(
+        ".notetweet-account-selector"
+      );
+      if (accountContainer) {
+        statusIndicator = accountContainer.createEl("div", {
+          cls: "notetweet-account-status",
+        });
+      }
+    }
+
+    if (statusIndicator) {
+      // Use saved connection status from account
+      let statusText = "";
+      let statusColor = "";
+
+      switch (account.connectionStatus) {
+        case "connected":
+          statusText = `✅ ${account.name} is connected`;
+          statusColor = "#28a745";
+          break;
+        case "failed":
+          statusText = `❌ ${account.name} - ${
+            account.lastError || "connection failed"
+          }`;
+          statusColor = "#dc3545";
+          break;
+        case "untested":
+        default:
+          statusText = `🔍 ${account.name} - not tested`;
+          statusColor = "#6c757d";
+          break;
+      }
+
+      statusIndicator.textContent = statusText;
+      statusIndicator.style.color = statusColor;
+      statusIndicator.style.fontSize = "0.9em";
+      statusIndicator.style.marginTop = "5px";
+    }
+  }
+
+  protected getSelectedAccount(): TwitterAccount | null {
+    if (!this.selectedAccountId) return null;
+    return this.plugin.getAccountById(this.selectedAccountId);
+  }
+
   protected abstract addActionButtons();
 }
-

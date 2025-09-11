@@ -1,6 +1,5 @@
-import {ITweet} from "./ITweet";
+import { ITweet } from "./ITweet";
 
 export interface IScheduledTweet extends ITweet {
-    postat: number;
+  postat: number;
 }
-
