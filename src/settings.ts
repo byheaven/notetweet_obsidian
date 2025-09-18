@@ -32,12 +32,16 @@ export interface NoteTweetSettings {
   // Multi-account support
   accounts: TwitterAccount[];
   lastUsedAccountId: string;
+
+  // Migration tracking
+  migrationVersion?: number; // Track which migrations have been completed
 }
 
 export const DEFAULT_SETTINGS: NoteTweetSettings = Object.freeze({
   // Multi-account support
   accounts: [],
   lastUsedAccountId: "",
+  migrationVersion: 0,
 });
 
 // Utility functions for account management

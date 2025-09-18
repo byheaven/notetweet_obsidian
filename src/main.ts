@@ -24,58 +24,42 @@ export default class NoteTweet extends Plugin {
 
   public twitterHandler: TwitterHandler;
 
+  // Unified command execution wrapper that ensures Twitter connection
+  private async executeWithConnection(callback: () => Promise<void>) {
+    if (!this.twitterHandler.isConnectedToTwitter) {
+      await this.connectToTwitterWithPlainSettings();
+      if (!this.twitterHandler.isConnectedToTwitter) {
+        new TweetErrorModal(this.app, "Not connected to Twitter").open();
+        return;
+      }
+    }
+    await callback();
+  }
+
   async onload() {
     console.log(WELCOME_MESSAGE);
 
     await this.loadSettings();
     this.twitterHandler = new TwitterHandler(this);
-    await this.connectToTwitterWithPlainSettings();
+    // Delay Twitter connection to first use - improves startup performance
+    // await this.connectToTwitterWithPlainSettings();
 
     this.addCommand({
       id: "post-selected-as-tweet",
       name: "Post Selected as Tweet",
-      callback: async () => {
-        if (this.twitterHandler.isConnectedToTwitter)
-          await this.postSelectedTweet();
-        else {
-          this.connectToTwitterWithPlainSettings();
-
-          if (!this.twitterHandler.isConnectedToTwitter)
-            new TweetErrorModal(this.app, "Not connected to Twitter").open();
-          else await this.postSelectedTweet();
-        }
-      },
+      callback: async () => await this.executeWithConnection(() => this.postSelectedTweet()),
     });
 
     this.addCommand({
       id: "post-file-as-thread",
       name: "Post File as Thread",
-      callback: async () => {
-        if (this.twitterHandler.isConnectedToTwitter)
-          await this.postThreadInFile();
-        else {
-          this.connectToTwitterWithPlainSettings();
-
-          if (!this.twitterHandler.isConnectedToTwitter)
-            new TweetErrorModal(this.app, "Not connected to Twitter").open();
-          else await this.postThreadInFile();
-        }
-      },
+      callback: async () => await this.executeWithConnection(() => this.postThreadInFile()),
     });
 
     this.addCommand({
       id: "post-tweet",
       name: "Post Tweet",
-      callback: async () => {
-        if (this.twitterHandler.isConnectedToTwitter) await this.postTweetMode();
-        else {
-          this.connectToTwitterWithPlainSettings();
-
-          if (!this.twitterHandler.isConnectedToTwitter)
-            new TweetErrorModal(this.app, "Not connected to Twitter").open();
-          else await this.postTweetMode();
-        }
-      },
+      callback: async () => await this.executeWithConnection(() => this.postTweetMode()),
     });
 
     /*START.DEVCMD*/
@@ -94,8 +78,7 @@ export default class NoteTweet extends Plugin {
 
     this.addSettingTab(new NoteTweetSettingsTab(this.app, this));
 
-    // Initialize schedulers for accounts with scheduling enabled
-    this.initializeSchedulers();
+    // Removed immediate scheduler initialization - now using lazy loading
   }
 
   private async postTweetMode() {
@@ -320,103 +303,117 @@ export default class NoteTweet extends Plugin {
   }
 
   private async migrateLegacySettings() {
+    const CURRENT_MIGRATION_VERSION = 3; // Increment this when adding new migrations
+
+    // Skip if already migrated to current version
+    if (this.settings.migrationVersion === CURRENT_MIGRATION_VERSION) {
+      return;
+    }
+
     // Cast to any to access potentially legacy fields
     const rawSettings: any = this.settings;
-    
-    // Check if we have legacy single-account settings but no accounts array
-    const hasLegacyCredentials = rawSettings.apiKey && 
-                                rawSettings.apiSecret && 
-                                rawSettings.accessToken && 
-                                rawSettings.accessTokenSecret;
-    
-    const hasNoAccounts = !this.settings.accounts || this.settings.accounts.length === 0;
-    
-    if (hasLegacyCredentials && hasNoAccounts) {
-      console.log("NoteTweet: Migrating from single-account to multi-account setup");
-      
-      // Create the first account from legacy credentials with legacy settings
-      const legacyAccount = createAccount("My Twitter Account", {
-        apiKey: rawSettings.apiKey,
-        apiSecret: rawSettings.apiSecret,
-        accessToken: rawSettings.accessToken,
-        accessTokenSecret: rawSettings.accessTokenSecret
-      }, {
-        postTweetTag: rawSettings.postTweetTag || "",
-        autoSplitTweets: rawSettings.autoSplitTweets ?? true,
-        // Migrate global scheduling to first account
-        scheduling: rawSettings.scheduling || {
-          enabled: false,
-          url: "",
-          password: "",
-          cronStrings: []
-        }
-      });
-      
-      // Set up the new multi-account structure
-      this.settings.accounts = [legacyAccount];
-      this.settings.lastUsedAccountId = legacyAccount.id;
-      
-      // Clean up legacy fields from settings
-      this.cleanupLegacyFields();
-      
-      await this.saveSettings();
-      
-      new Notice("NoteTweet: Successfully migrated to multi-account support! Your account is now named 'My Twitter Account'.");
+    let needsSave = false;
+
+    // Migration 1: Legacy single-account to multi-account (version 0 -> 1)
+    if (!this.settings.migrationVersion || this.settings.migrationVersion < 1) {
+      const hasLegacyCredentials = rawSettings.apiKey &&
+                                  rawSettings.apiSecret &&
+                                  rawSettings.accessToken &&
+                                  rawSettings.accessTokenSecret;
+
+      const hasNoAccounts = !this.settings.accounts || this.settings.accounts.length === 0;
+
+      if (hasLegacyCredentials && hasNoAccounts) {
+        console.log("NoteTweet: Migrating from single-account to multi-account setup");
+
+        // Create the first account from legacy credentials with legacy settings
+        const legacyAccount = createAccount("My Twitter Account", {
+          apiKey: rawSettings.apiKey,
+          apiSecret: rawSettings.apiSecret,
+          accessToken: rawSettings.accessToken,
+          accessTokenSecret: rawSettings.accessTokenSecret
+        }, {
+          postTweetTag: rawSettings.postTweetTag || "",
+          autoSplitTweets: rawSettings.autoSplitTweets ?? true,
+          // Migrate global scheduling to first account
+          scheduling: rawSettings.scheduling || {
+            enabled: false,
+            url: "",
+            password: "",
+            cronStrings: []
+          }
+        });
+
+        // Set up the new multi-account structure
+        this.settings.accounts = [legacyAccount];
+        this.settings.lastUsedAccountId = legacyAccount.id;
+
+        // Clean up legacy fields from settings
+        this.cleanupLegacyFields();
+
+        needsSave = true;
+        new Notice("NoteTweet: Successfully migrated to multi-account support! Your account is now named 'My Twitter Account'.");
+      }
     }
-    
-    // Migrate global scheduling to account-level if needed
-    if (rawSettings.scheduling && this.settings.accounts.length > 0) {
-      console.log("NoteTweet: Migrating global scheduling to all accounts");
-      
-      let migratedCount = 0;
-      
-      // Migrate scheduling settings to ALL accounts that don't have it yet
+
+    // Migration 2: Global scheduling to account-level (version 1 -> 2)
+    if (!this.settings.migrationVersion || this.settings.migrationVersion < 2) {
+      if (rawSettings.scheduling && this.settings.accounts.length > 0) {
+        console.log("NoteTweet: Migrating global scheduling to all accounts");
+
+        let migratedCount = 0;
+
+        // Migrate scheduling settings to ALL accounts that don't have it yet
+        for (const account of this.settings.accounts) {
+          if (!account.scheduling) {
+            account.scheduling = {
+              enabled: rawSettings.scheduling.enabled || false,
+              url: rawSettings.scheduling.url || "",
+              password: rawSettings.scheduling.password || "",
+              cronStrings: rawSettings.scheduling.cronStrings || []
+            };
+            migratedCount++;
+          }
+        }
+
+        if (migratedCount > 0) {
+          delete rawSettings.scheduling;
+          needsSave = true;
+          new Notice(`NoteTweet: Scheduling settings migrated to ${migratedCount} account(s)`);
+        }
+      }
+    }
+
+    // Migration 3: Clean up deprecated fields (version 2 -> 3)
+    if (!this.settings.migrationVersion || this.settings.migrationVersion < 3) {
       for (const account of this.settings.accounts) {
-        if (!account.scheduling) {
-          account.scheduling = {
-            enabled: rawSettings.scheduling.enabled || false,
-            url: rawSettings.scheduling.url || "",
-            password: rawSettings.scheduling.password || "",
-            cronStrings: rawSettings.scheduling.cronStrings || []
-          };
-          migratedCount++;
+        // Clean up secureMode field
+        if ((account as any).secureMode !== undefined) {
+          delete (account as any).secureMode;
+          needsSave = true;
+        }
+
+        // Clean up isActive field
+        if ((account as any).isActive !== undefined) {
+          delete (account as any).isActive;
+          needsSave = true;
         }
       }
-      
-      if (migratedCount > 0) {
-        delete rawSettings.scheduling;
-        await this.saveSettings();
-        
-        new Notice(`NoteTweet: Scheduling settings migrated to ${migratedCount} account(s)`);
+
+      if (needsSave) {
+        console.log("NoteTweet: Cleaned up deprecated fields from accounts");
       }
     }
-    
-    // Clean up secureMode field from all accounts (deprecated feature)
-    let secureModeCleaned = false;
-    for (const account of this.settings.accounts) {
-      if ((account as any).secureMode !== undefined) {
-        delete (account as any).secureMode;
-        secureModeCleaned = true;
-      }
+
+    // Update migration version and save if needed
+    if (this.settings.migrationVersion !== CURRENT_MIGRATION_VERSION) {
+      this.settings.migrationVersion = CURRENT_MIGRATION_VERSION;
+      needsSave = true;
     }
-    
-    if (secureModeCleaned) {
+
+    // Save all changes at once
+    if (needsSave) {
       await this.saveSettings();
-      console.log("NoteTweet: Cleaned up deprecated secureMode fields from accounts");
-    }
-    
-    // Clean up isActive field from all accounts (unused field)
-    let isActiveCleaned = false;
-    for (const account of this.settings.accounts) {
-      if ((account as any).isActive !== undefined) {
-        delete (account as any).isActive;
-        isActiveCleaned = true;
-      }
-    }
-    
-    if (isActiveCleaned) {
-      await this.saveSettings();
-      console.log("NoteTweet: Cleaned up unused isActive fields from accounts");
     }
   }
 
@@ -436,34 +433,41 @@ export default class NoteTweet extends Plugin {
     await this.saveData(this.settings);
   }
 
-  
-  // Initialize schedulers for accounts with scheduling enabled
-  private initializeSchedulers() {
-    this.schedulers.clear();
-    
-    for (const account of this.settings.accounts) {
-      if (account.scheduling && account.scheduling.enabled) {
-        const scheduler = new SelfHostedScheduler(
-          this.app,
-          account.scheduling.url,
-          account.scheduling.password
-        );
-        this.schedulers.set(account.id, scheduler);
-        console.log(`NoteTweet: Initialized scheduler for account "${account.name}"`);
-      }
+
+  // Lazy initialization of schedulers - only create when needed
+  private getOrCreateScheduler(account: TwitterAccount): NoteTweetScheduler | null {
+    if (!account.scheduling || !account.scheduling.enabled) {
+      return null;
     }
+
+    // Check if scheduler already exists
+    let scheduler = this.schedulers.get(account.id);
+    if (!scheduler) {
+      // Create scheduler on demand
+      scheduler = new SelfHostedScheduler(
+        this.app,
+        account.scheduling.url,
+        account.scheduling.password
+      );
+      this.schedulers.set(account.id, scheduler);
+      console.log(`NoteTweet: Created scheduler for account "${account.name}" on demand`);
+    }
+
+    return scheduler;
   }
   
-  // Get scheduler for a specific account
+  // Get scheduler for a specific account (lazy initialization)
   public getSchedulerForAccount(accountId: string): NoteTweetScheduler | null {
-    return this.schedulers.get(accountId) || null;
+    const account = this.getAccountById(accountId);
+    if (!account) return null;
+    return this.getOrCreateScheduler(account);
   }
   
-  // Get scheduler for current account
+  // Get scheduler for current account (lazy initialization)
   public getCurrentScheduler(): NoteTweetScheduler | null {
     const currentAccount = this.getCurrentAccount();
     if (!currentAccount) return null;
-    return this.getSchedulerForAccount(currentAccount.id);
+    return this.getOrCreateScheduler(currentAccount);
   }
 
   // Account management helper methods
