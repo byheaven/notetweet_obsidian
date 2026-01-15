@@ -9,6 +9,8 @@ import {PostTweetModal} from "./PostTweetModal";
 import NoteTweet from "../main";
 
 export class NewTweetModal extends PostTweetModal<IScheduledTweet | ITweet> {
+    private selectedAccountId: string | null = null;
+
     static PostTweet(app: App, selection?: { text: string, thread: boolean }): Promise<ITweet | IScheduledTweet> {
         // Get plugin instance
         const plugin = (app as any).plugins.plugins["notetweet"] as NoteTweet;
@@ -19,6 +21,44 @@ export class NewTweetModal extends PostTweetModal<IScheduledTweet | ITweet> {
 
     constructor(app: App, plugin: NoteTweet, selection?: { text: string, thread: boolean }) {
         super(app, plugin, selection);
+        // Default to current account
+        this.selectedAccountId = plugin.getCurrentAccount()?.id || null;
+    }
+
+    protected createFirstTextarea() {
+        // Add account selector before the first textarea
+        this.addAccountSelector(this.textZone);
+        super.createFirstTextarea();
+    }
+
+    private addAccountSelector(container: HTMLElement) {
+        const accounts = this.plugin.settings.accounts || [];
+        if (accounts.length <= 1) return; // No need for selector with 0-1 accounts
+
+        const selectorDiv = container.createDiv({ cls: "notetweet-account-selector" });
+        selectorDiv.style.marginBottom = "10px";
+        selectorDiv.style.padding = "8px";
+        selectorDiv.style.borderBottom = "1px solid var(--background-modifier-border)";
+
+        const label = selectorDiv.createEl("span", { text: "Post as: " });
+        label.style.marginRight = "8px";
+
+        const select = selectorDiv.createEl("select");
+        select.style.padding = "4px 8px";
+
+        for (const account of accounts) {
+            const option = select.createEl("option", {
+                text: account.name,
+                value: account.id
+            });
+            if (account.id === this.selectedAccountId) {
+                option.selected = true;
+            }
+        }
+
+        select.addEventListener("change", () => {
+            this.selectedAccountId = select.value;
+        });
     }
 
     protected addActionButtons() {
@@ -45,7 +85,7 @@ export class NewTweetModal extends PostTweetModal<IScheduledTweet | ITweet> {
             const threadContent: string[] = this.getThreadContent();
             if (!threadContent) return;
 
-            const tweet: ITweet = new Tweet(threadContent);
+            const tweet: ITweet = new Tweet(threadContent, this.selectedAccountId || undefined);
             this.resolve(tweet);
             this.close();
         };
@@ -57,7 +97,7 @@ export class NewTweetModal extends PostTweetModal<IScheduledTweet | ITweet> {
             if (!threadContent) return;
 
             const scheduledDateTime: number = await promptForDateTime(this.app);
-            const tweet: IScheduledTweet = new ScheduledTweet(threadContent, scheduledDateTime)
+            const tweet: IScheduledTweet = new ScheduledTweet(threadContent, scheduledDateTime, this.selectedAccountId || undefined);
             this.resolve(tweet);
             this.close();
         }

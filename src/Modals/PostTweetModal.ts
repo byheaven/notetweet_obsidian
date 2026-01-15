@@ -2,6 +2,36 @@ import {App, Modal} from "obsidian";
 import {log} from "../ErrorModule/logManager";
 import NoteTweet from "../main";
 
+// Twitter character counting: CJK characters count as 2, others as 1
+function getTwitterLength(text: string): number {
+  let length = 0;
+  for (const char of text) {
+    // CJK Unicode ranges:
+    // CJK Unified Ideographs: U+4E00 - U+9FFF
+    // CJK Unified Ideographs Extension A: U+3400 - U+4DBF
+    // CJK Compatibility Ideographs: U+F900 - U+FAFF
+    // Hiragana: U+3040 - U+309F
+    // Katakana: U+30A0 - U+30FF
+    // Hangul Syllables: U+AC00 - U+D7AF
+    // Fullwidth forms: U+FF00 - U+FFEF
+    const code = char.charCodeAt(0);
+    if (
+      (code >= 0x4E00 && code <= 0x9FFF) ||   // CJK Unified Ideographs
+      (code >= 0x3400 && code <= 0x4DBF) ||   // CJK Extension A
+      (code >= 0xF900 && code <= 0xFAFF) ||   // CJK Compatibility
+      (code >= 0x3040 && code <= 0x309F) ||   // Hiragana
+      (code >= 0x30A0 && code <= 0x30FF) ||   // Katakana
+      (code >= 0xAC00 && code <= 0xD7AF) ||   // Hangul
+      (code >= 0xFF00 && code <= 0xFFEF)      // Fullwidth
+    ) {
+      length += 2;
+    } else {
+      length += 1;
+    }
+  }
+  return length;
+}
+
 export abstract class PostTweetModal<TPromise> extends Modal {
   protected textAreas: HTMLTextAreaElement[] = [];
   protected readonly MAX_TWEET_LENGTH: number = 280;
@@ -92,11 +122,11 @@ export abstract class PostTweetModal<TPromise> extends Modal {
   // Repeat this until all separated lines are joined into tweets with proper sizes.
   private textInputHandler(str: string) {
     // If auto-split is disabled, return the original string as a single chunk
-    const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+    const autoSplitEnabled = this.plugin?.getCurrentAccount()?.autoSplitTweets ?? true;
     if (!autoSplitEnabled) {
       return [str];
     }
-    
+
     // Otherwise, perform the normal splitting logic
     let chunks: string[] = str.split("\n");
     let i = 0,
@@ -104,23 +134,57 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     chunks.forEach((chunk, j) => {
       if (joinedTextChunks[i] == null) joinedTextChunks[i] = "";
       if (
-          joinedTextChunks[i].length + chunk.length <=
+          getTwitterLength(joinedTextChunks[i]) + getTwitterLength(chunk) <=
           this.MAX_TWEET_LENGTH - 1
       ) {
         joinedTextChunks[i] = joinedTextChunks[i] + chunk;
         joinedTextChunks[i] += j == chunks.length - 1 ? "" : "\n";
       } else {
-        if (chunk.length > this.MAX_TWEET_LENGTH) {
-          let x = chunk.split(/[.?!]\s/).join("\n");
-          this.textInputHandler(x).forEach(
-              (split) => (joinedTextChunks[++i] = split)
-          );
+        if (getTwitterLength(chunk) > this.MAX_TWEET_LENGTH) {
+          // Try to split by sentence endings (supports both English and CJK punctuation)
+          const sentenceSplits = chunk.split(/(?<=[.?!。？！])\s*/).filter(s => s.length > 0);
+
+          if (sentenceSplits.length > 1) {
+            // Successfully split into sentences, process recursively
+            this.textInputHandler(sentenceSplits.join("\n")).forEach(
+                (split) => (joinedTextChunks[++i] = split)
+            );
+          } else {
+            // Cannot split by sentences, split by character count
+            const splitChunks = this.splitByTwitterLength(chunk, this.MAX_TWEET_LENGTH);
+            splitChunks.forEach((split) => (joinedTextChunks[++i] = split));
+          }
         } else {
           joinedTextChunks[++i] = chunk;
         }
       }
     });
     return joinedTextChunks;
+  }
+
+  // Split a long string into chunks that fit within Twitter's character limit
+  private splitByTwitterLength(text: string, maxLength: number): string[] {
+    const chunks: string[] = [];
+    let currentChunk = "";
+    let currentLength = 0;
+
+    for (const char of text) {
+      const charLength = getTwitterLength(char);
+      if (currentLength + charLength > maxLength) {
+        chunks.push(currentChunk);
+        currentChunk = char;
+        currentLength = charLength;
+      } else {
+        currentChunk += char;
+        currentLength += charLength;
+      }
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
   }
 
   onClose() {
@@ -145,7 +209,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     lengthCheckerEl.addClass("ntLengthChecker");
 
     textarea.addEventListener("input", () =>
-        this.onTweetLengthHandler(textarea.textLength, lengthCheckerEl)
+        this.onTweetLengthHandler(getTwitterLength(textarea.value), lengthCheckerEl)
     );
     textarea.addEventListener(
         "keydown",
@@ -176,10 +240,10 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     return (event: any) => {
       let pasted: string = event.clipboardData.getData("text");
       
-      // Check if the pasted content would exceed the character limit
-      if (pasted.length + textarea.textLength > this.MAX_TWEET_LENGTH) {
+      // Check if the pasted content would exceed the character limit (Twitter weighted)
+      if (getTwitterLength(pasted) + getTwitterLength(textarea.value) > this.MAX_TWEET_LENGTH) {
         // If auto-split is enabled, we should process the paste
-        const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+        const autoSplitEnabled = this.plugin?.getCurrentAccount()?.autoSplitTweets ?? true;
         if (autoSplitEnabled) {
           event.preventDefault();
           let splicedPaste = this.textInputHandler(pasted);
@@ -207,8 +271,8 @@ export abstract class PostTweetModal<TPromise> extends Modal {
       }
 
       // Only auto-split tweets if the setting is enabled
-      const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
-      if (key.code == "Enter" && textarea.textLength >= this.MAX_TWEET_LENGTH && autoSplitEnabled) {
+      const autoSplitEnabled = this.plugin?.getCurrentAccount()?.autoSplitTweets ?? true;
+      if (key.code == "Enter" && getTwitterLength(textarea.value) >= this.MAX_TWEET_LENGTH && autoSplitEnabled) {
         key.preventDefault();
         try {
           this.createTextarea(textZone);
@@ -316,7 +380,7 @@ export abstract class PostTweetModal<TPromise> extends Modal {
     const DEFAULT_COLOR = "#339900";
 
     // Show different message based on auto-split setting
-    const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+    const autoSplitEnabled = this.plugin?.getCurrentAccount()?.autoSplitTweets ?? true;
     if (strlen >= this.MAX_TWEET_LENGTH && !autoSplitEnabled) {
       lengthCheckerEl.innerText = `${strlen} / 280 characters.`;
       lengthCheckerEl.style.color = "#ffcc00"; // Yellow color
@@ -386,11 +450,11 @@ export abstract class PostTweetModal<TPromise> extends Modal {
 
     // If auto-split is disabled, we still need to check for empty tweets
     // but allow tweets that exceed the length limit
-    const autoSplitEnabled = this.plugin?.settings?.autoSplitTweets ?? true;
+    const autoSplitEnabled = this.plugin?.getCurrentAccount()?.autoSplitTweets ?? true;
     if (autoSplitEnabled) {
       if (
           threadContent.find(
-              (txt) => txt.length > this.MAX_TWEET_LENGTH || txt == ""
+              (txt) => getTwitterLength(txt) > this.MAX_TWEET_LENGTH || txt == ""
           ) != null
       ) {
         log.logWarning("At least one of your tweets is too long or empty.");

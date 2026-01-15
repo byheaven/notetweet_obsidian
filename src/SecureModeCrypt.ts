@@ -1,10 +1,14 @@
-import CryptoES from "crypto-es";
+// Stub file - SecureMode is not used in multi-account version
+// This file exists only to satisfy imports from legacy SecureMode modals
 
 export class SecureModeCrypt {
-  public static encryptString(string: string, key: string) {
-    return CryptoES.AES.encrypt(string, key).toString();
+  static encryptString(text: string, password: string): string {
+    console.warn("SecureModeCrypt.encryptString called but SecureMode is not supported in multi-account version");
+    return text;
   }
-  public static decryptString(string: string, key: string) {
-    return CryptoES.AES.decrypt(string, key).toString(CryptoES.enc.Utf8);
+
+  static decryptString(text: string, password: string): string {
+    console.warn("SecureModeCrypt.decryptString called but SecureMode is not supported in multi-account version");
+    return text;
   }
 }
